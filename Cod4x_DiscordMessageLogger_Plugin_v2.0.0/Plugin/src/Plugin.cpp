@@ -1,12 +1,13 @@
-#include "../libs/pinc.h"
-#include "../includes/Queue.hpp"
-#include "../../build/default/Plugin/version.h"
+#include "pinc.h"
+#include "Queue.hpp"
+#include "version.h"
 
 #include <pthread.h>
 #include <stdlib.h>
 
 pthread_mutex_t mutex;
 IQueue* iQueue = nullptr;
+const size_t MAX_SAY_TEXT = 150;
 
 PCL int OnInit() {
 	pthread_mutex_init(&mutex, NULL);
@@ -17,21 +18,37 @@ PCL int OnInit() {
 }
 
 PCL void OnMessageSent(char* message, int slot, qboolean *show, int mode) {
-	pthread_mutex_lock(&mutex);
+    pthread_mutex_lock(&mutex);
 
-	char* playerName = Plugin_GetPlayerName(slot);
-	size_t len = (strlen(message) + strlen(playerName) + 5) * sizeof(char);
+    // Ignore quickchat messages (0x14)
+    if ((unsigned char)message[0] == 0x14) {
+        pthread_mutex_unlock(&mutex);
+        return;
+    }
 
-	char* result = (char*)malloc(len);
-	snprintf(result, len, "%s: %s\n\n", playerName, message);
+    // Make a local copy so we never modify COD4X's shared buffer
+    char local_msg[MAX_SAY_TEXT + 1];
+    snprintf(local_msg, sizeof(local_msg), "%s", message);
 
-	iQueue->sendQueue(result);
+    // Strip leading control codes (0x15, 0x16, color codes < 0x20)
+    char* msg_ptr = local_msg;
+    while ((unsigned char)msg_ptr[0] < 0x20) {
+        msg_ptr++;
+    }
 
-	free(result);
+    char* playerName = Plugin_GetPlayerName(slot);
+    size_t len = strlen(playerName) + strlen(msg_ptr) + 5;
 
-	pthread_mutex_unlock(&mutex);
+    char* result = (char*)malloc(len);
+    snprintf(result, len, "%s: %s\n\n", playerName, msg_ptr);
 
+    iQueue->sendQueue(result);
+
+    free(result);
+
+    pthread_mutex_unlock(&mutex);
 }
+
 
 PCL void OnTerminate() {
 	pthread_mutex_destroy(&mutex);

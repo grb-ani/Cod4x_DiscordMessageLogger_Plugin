@@ -1,5 +1,5 @@
-#include "../libs/pinc.h"
-#include "../../Plugin/includes/Queue.hpp"
+#include "pinc.h"
+#include "Queue.hpp"
 
 #include <stdio.h>
 #include <stdlib.h>

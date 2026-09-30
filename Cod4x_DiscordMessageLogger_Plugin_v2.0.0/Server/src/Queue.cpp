@@ -8,6 +8,7 @@
 #include <mqueue.h>
 #include <errno.h>
 #include <string.h>
+#include <cjson/cJSON.h>
 
 IDiscordBot* Queue::botInstance = nullptr;
 
@@ -79,10 +80,49 @@ void Queue::messageHandler(union sigval sv) {
 
     if (msgLen >= 0) {
         self->buffer[msgLen] = '\0';
-        printf("NOTICE: Returning message: %s\n", self->buffer);
 
-        if (botInstance) {
-            botInstance->log(self->buffer);
+        // Parse JSON payload
+        cJSON* root = cJSON_Parse(self->buffer);
+        if (!root) {
+            fprintf(stderr, "NOTICE: Received non‑JSON message: %s\n", self->buffer);
+        } else {
+            cJSON* player = cJSON_GetObjectItemCaseSensitive(root, "player");
+            cJSON* message = cJSON_GetObjectItemCaseSensitive(root, "message");
+            cJSON* slot    = cJSON_GetObjectItemCaseSensitive(root, "slot");
+            cJSON* show    = cJSON_GetObjectItemCaseSensitive(root, "show");
+            cJSON* mode    = cJSON_GetObjectItemCaseSensitive(root, "mode");
+
+            if (player && message) {
+                const char* modeStr = "UNKNOWN";
+
+                if (mode && cJSON_IsNumber(mode)) {
+                    switch (mode->valueint) {
+                        case 0: modeStr = "ALL"; break;
+                        case 1: modeStr = "TEAM"; break;
+                        case 2: modeStr = "TELL"; break;
+                    }
+                }
+
+                char formatted[1024];
+                snprintf(
+                    formatted,
+                    sizeof(formatted),
+                    "%s: (%s) %s",
+                    player->valuestring,
+                    modeStr,
+                    message->valuestring
+                );
+
+                printf("NOTICE: JSON message formatted: %s\n", formatted);
+
+                if (botInstance) {
+                    botInstance->log(formatted);
+                }
+            } else {
+                fprintf(stderr, "NOTICE: JSON missing required fields\n");
+            }
+
+            cJSON_Delete(root);
         }
 
     } else {
@@ -93,6 +133,7 @@ void Queue::messageHandler(union sigval sv) {
 
     self->registerNotification();
 }
+
 
 Queue::~Queue() {
     free(buffer);

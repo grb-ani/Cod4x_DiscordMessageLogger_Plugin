@@ -4,6 +4,7 @@
 
 #include <pthread.h>
 #include <stdlib.h>
+#include <cjson/cJSON.h>
 
 pthread_mutex_t mutex;
 IQueue* iQueue = nullptr;
@@ -30,25 +31,31 @@ PCL void OnMessageSent(char* message, int slot, qboolean *show, int mode) {
     char local_msg[MAX_SAY_TEXT + 1];
     snprintf(local_msg, sizeof(local_msg), "%s", message);
 
-    // Strip leading control codes (0x15, 0x16, color codes < 0x20)
+    // Strip leading control codes
     char* msg_ptr = local_msg;
     while ((unsigned char)msg_ptr[0] < 0x20) {
         msg_ptr++;
     }
 
     char* playerName = Plugin_GetPlayerName(slot);
-    size_t len = strlen(playerName) + strlen(msg_ptr) + 5;
 
-    char* result = (char*)malloc(len);
-    snprintf(result, len, "%s: %s\n\n", playerName, msg_ptr);
+    // Build JSON payload
+    cJSON* root = cJSON_CreateObject();
+    cJSON_AddStringToObject(root, "player", playerName);
+    cJSON_AddStringToObject(root, "message", msg_ptr);
+    cJSON_AddNumberToObject(root, "slot", slot);
+    cJSON_AddBoolToObject(root, "show", *show);
+    cJSON_AddNumberToObject(root, "mode", mode);
 
-    iQueue->sendQueue(result);
+    char* jsonStr = cJSON_PrintUnformatted(root);
 
-    free(result);
+    iQueue->sendQueue(jsonStr);
+
+    free(jsonStr);
+    cJSON_Delete(root);
 
     pthread_mutex_unlock(&mutex);
 }
-
 
 PCL void OnTerminate() {
 	pthread_mutex_destroy(&mutex);

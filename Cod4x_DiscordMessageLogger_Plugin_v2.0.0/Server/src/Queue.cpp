@@ -1,5 +1,5 @@
-#include "../includes/Queue.hpp"
-#include "../includes/Signal.hpp"
+#include "Queue.hpp"
+#include "DiscordBot.hpp"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -8,63 +8,93 @@
 #include <mqueue.h>
 #include <errno.h>
 #include <string.h>
-#include <memory>
+
+IDiscordBot* Queue::botInstance = nullptr;
 
 Queue::Queue() {
-	memset(&dMessageQueueAttr, 0, sizeof(dMessageQueueAttr));
-	dMessageQueueAttr.mq_flags = 0;
-	dMessageQueueAttr.mq_maxmsg = 10;
-	dMessageQueueAttr.mq_msgsize = MAX_SIZE;
-	dMessageQueueAttr.mq_curmsgs = 0;
+    memset(&dMessageQueueAttr, 0, sizeof(dMessageQueueAttr));
+    dMessageQueueAttr.mq_flags = 0;
+    dMessageQueueAttr.mq_maxmsg = 10;
+    dMessageQueueAttr.mq_msgsize = MAX_SIZE;
+    dMessageQueueAttr.mq_curmsgs = 0;
 
-	mq_unlink(COD4X_QUEUE_NAME);
-	discordMessageQueue = mq_open(COD4X_QUEUE_NAME, O_CREAT | O_RDONLY | O_NONBLOCK, 0666, &dMessageQueueAttr);
-	if(discordMessageQueue == (mqd_t)-1) {
-		fprintf(stderr, "Error occurred on opening query: %s\n", strerror(errno));
-		exit(EXIT_FAILURE);
+    // Ensure clean queue
+    mq_unlink(COD4X_QUEUE_NAME);
 
-	}
+    discordMessageQueue = mq_open(
+        COD4X_QUEUE_NAME,
+        O_CREAT | O_RDONLY | O_NONBLOCK,
+        0666,
+        &dMessageQueueAttr
+    );
 
-	struct mq_attr attr;
-	memset(&attr, 0, sizeof(attr));
-	mq_getattr(discordMessageQueue, &attr);
-	printf("mq_msgsize after open: %ld\n", attr.mq_msgsize);
+    if (discordMessageQueue == (mqd_t)-1) {
+        fprintf(stderr, "Error opening MQ: %s\n", strerror(errno));
+        exit(EXIT_FAILURE);
+    }
 
-	bufferSize = MAX_SIZE * sizeof(char);
-	buffer = (char*)malloc(bufferSize);
-	memset(buffer, 0, bufferSize);
+    struct mq_attr attr;
+    memset(&attr, 0, sizeof(attr));
+    mq_getattr(discordMessageQueue, &attr);
+    printf("mq_msgsize after open: %ld\n", attr.mq_msgsize);
 
-	dur500000000 = {0, 500000000};
+    bufferSize = MAX_SIZE * sizeof(char);
+    buffer = (char*)malloc(bufferSize);
+    memset(buffer, 0, bufferSize);
 
+    printf("NOTICE: MQ opened successfully, switching to event-driven mode.\n");
+
+    registerNotification();
 }
 
-const char* Queue::receiveQueue() {
-	printf("NOTICE: Queue poll started, receiving messages...\n");
+void Queue::setBot(IDiscordBot* bot) {
+    botInstance = bot;
+}
 
-	msgLen = mq_receive(discordMessageQueue, buffer, bufferSize, 0);
-	if(msgLen < 0) {
-		if(errno == EAGAIN) {
-			printf("NOTICE: No messages available...\n");
-			nanosleep(&dur500000000, NULL);
-			return nullptr;
+void Queue::registerNotification() {
+    struct sigevent sev{};
+    sev.sigev_notify = SIGEV_THREAD;
+    sev.sigev_notify_function = &Queue::messageHandler;
+    sev.sigev_notify_attributes = nullptr;
+    sev.sigev_value.sival_ptr = this;
 
-		} else {
-			fprintf(stderr, "Error occurred on receiving message: %s\n", strerror(errno));
-			exit(EXIT_FAILURE);
+    if (mq_notify(discordMessageQueue, &sev) == -1) {
+        if (errno != EBUSY) {
+            fprintf(stderr, "Error registering mq_notify: %s\n", strerror(errno));
+        }
+    }
+}
 
-		}
+void Queue::messageHandler(union sigval sv) {
+    Queue* self = static_cast<Queue*>(sv.sival_ptr);
 
-	}
+    memset(self->buffer, 0, self->bufferSize);
 
-	buffer[msgLen] = '\0';
+    ssize_t msgLen = mq_receive(
+        self->discordMessageQueue,
+        self->buffer,
+        self->bufferSize,
+        nullptr
+    );
 
-	printf("NOTICE: Returning message: %s\n", buffer);
+    if (msgLen >= 0) {
+        self->buffer[msgLen] = '\0';
+        printf("NOTICE: Returning message: %s\n", self->buffer);
 
-	return buffer;
+        if (botInstance) {
+            botInstance->log(self->buffer);
+        }
+
+    } else {
+        if (errno != EAGAIN) {
+            fprintf(stderr, "Error receiving MQ message: %s\n", strerror(errno));
+        }
+    }
+
+    self->registerNotification();
 }
 
 Queue::~Queue() {
-	free(buffer);
-	mq_close(discordMessageQueue);
-
+    free(buffer);
+    mq_close(discordMessageQueue);
 }

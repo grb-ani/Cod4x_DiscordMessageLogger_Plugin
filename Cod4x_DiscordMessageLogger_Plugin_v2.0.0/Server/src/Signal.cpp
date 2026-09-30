@@ -1,4 +1,4 @@
-#include "../../Server/includes/Signal.hpp"
+#include "Signal.hpp"
 
 #include <stdio.h>
 #include <stdlib.h>

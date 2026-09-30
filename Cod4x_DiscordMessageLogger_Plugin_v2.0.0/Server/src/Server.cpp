@@ -1,67 +1,74 @@
-#include "../includes/JSON.hpp"
-#include "../includes/DiscordBot.hpp"
-#include "../includes/Queue.hpp"
-#include "../includes/Signal.hpp"
-#include "../includes/Thread.hpp"
+#include "JSON.hpp"
+#include "DiscordBot.hpp"
+#include "Queue.hpp"
+#include "Signal.hpp"
+#include "Thread.hpp"
 
 #include <cstddef>
 #include <memory>
+#include <unistd.h>
 
 int main(int argc, char** argv) {
 
-	std::unique_ptr<IJson> iJson = nullptr;
+    bool qRun = true;
 
-	std::shared_ptr<Json::discordData> discordDStruct = std::make_shared<Json::discordData>();
+    //
+    // Load JSON config
+    //
+    std::shared_ptr<Json::discordData> discordDStruct = std::make_shared<Json::discordData>();
+    std::unique_ptr<Json> json = std::make_unique<Json>();
+    json->dData = discordDStruct;
+    json->readDataToStruct();
 
-	std::unique_ptr<Json> json = std::make_unique<Json>();
+    printf("NOTICE: Token is: %s\n", discordDStruct->botToken);
+    printf("NOTICE: Channel ID is: %lu\n", discordDStruct->channelID);
 
-	json->dData = discordDStruct;
+    //
+    // Create Discord bot
+    //
+    std::unique_ptr<IDiscordBot> iDiscordBot = std::make_unique<DiscordBot>(
+        discordDStruct->botToken,
+        discordDStruct->channelID
+    );
 
-	iJson = std::move(json);
+    //
+    // Create Queue (event-driven)
+    //
+    Queue queue;
+    Queue::setBot(iDiscordBot.get());
 
-	iJson->readDataToStruct();
+    //
+    // Signal handler
+    //
+    std::shared_ptr<SigInt> Signal = std::make_shared<SigInt>(&qRun);
+    Signal->instance = Signal;
+    std::shared_ptr<ISignal> iSignal = std::move(Signal);
+    iSignal->regSig();
 
-	printf("NOTICE: Token is: %s\n", discordDStruct->botToken);
-	printf("NOTICE: Channel ID is: %llu\n", discordDStruct->channelID);
+    //
+    // Thread to run Discord bot
+    //
+    std::unique_ptr<IThread> iThread = std::make_unique<Thread>();
 
- 	bool qRun = 1;
+    iThread->setThreadFunc([](void* arg) -> void* {
+        IDiscordBot* bot = static_cast<IDiscordBot*>(arg);
+        return bot->run(nullptr);
+    });
 
-	std::unique_ptr<IDiscordBot> iDiscordBot = std::make_unique<DiscordBot>(
-			discordDStruct->botToken,
-			discordDStruct->channelID
-	);
+    iThread->run(iDiscordBot.get());
 
-	std::unique_ptr<IQueue> iQueue = std::make_unique<Queue>();
+    //
+    // Main thread waits for SIGINT
+    //
+    while (qRun) {
+        usleep(100000);
+    }
 
-	std::shared_ptr<SigInt> Signal = std::make_shared<SigInt>(&qRun);
-	Signal->instance = Signal;
+    //
+    // Shutdown
+    //
+    iDiscordBot->stop();
+    iThread->stop();
 
-	std::shared_ptr<ISignal> iSignal = std::move(Signal);
-
-	std::unique_ptr<IThread> iThread = std::make_unique<Thread>();
-
-	iSignal->regSig();
-
-	iThread->setThreadFunc([](void* arg) -> void* {
-		IDiscordBot* bot = static_cast<IDiscordBot*>(arg);
-		return bot->run(nullptr);
-
-	});
-
-	iThread->run(iDiscordBot.get());
-
-	const char* buffer;
-	while(qRun) {
-		buffer = iQueue->receiveQueue();
-		if(buffer) {
-			iDiscordBot->log(buffer);
-
-		}
-
-	}
-
-	iDiscordBot->stop();
-	iThread->stop();
-
-	return 0;
+    return 0;
 }

@@ -21,14 +21,18 @@ configure_file(version.h.in version.h)
 # Include plugin-specific directories
 include_directories(libs includes)
 
+# Include embedded cJSON
+include_directories(libs/cjson)
+
 # Build plugin shared library
 add_library(${PROJECT_NAME} SHARED
     src/Plugin.cpp
     src/Queue.cpp
+    libs/cjson/cJSON.c
 )
 
 # Include generated version.h
 target_include_directories(${PROJECT_NAME} PUBLIC "${PROJECT_BINARY_DIR}")
 
-# Link 32-bit pthread
+# Link pthread
 target_link_libraries(${PROJECT_NAME} PRIVATE ${PTHREAD_LIBRARIES})
